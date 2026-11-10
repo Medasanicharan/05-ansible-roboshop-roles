@@ -1,3 +1,8 @@
+- name: application Setup
+  include_role:
+    name: common
+    tasks_from: app-setup
+
 - name: "{{ component }} Setup"
   include_role:
     name: common
