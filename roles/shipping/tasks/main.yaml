@@ -1,50 +1,219 @@
-- name: app setup
-  include_role:
-    name: common
-    tasks_from: app-setup
+- name: configure shipping component
+  hosts: shipping
+  become: yes
+  tasks:
+  - name: enable maven 3.9
+    command: dnf module enable maven:3.9 -y
 
-- name: maven setup
-  include_role:
-    name: common
-    tasks_from: maven
+  - name: install maven and mysql
+    ansible.builtin.dnf:
+      name: "{{item}}"
+      # state: installed
+      state: present
+    loop:
+    - maven
+    - java-25-openjdk-devel
+    - mysql
 
-- name: Check if catalogue database exists
-  ansible.builtin.shell: |
-    mysql -h {{ MYSQL_HOST }} -u{{ MYSQL_ROOT_USER }} -p{{ MYSQL_ROOT_PASSWORD }} -e "USE cities; SHOW TABLES LIKE 'countries';"
-  register: mysql_db_check
-  ignore_errors: yes
-  changed_when: false
+  - name: Find Java 25 executable
+    ansible.builtin.shell: |
+      find /usr/lib/jvm -type f -path '*/bin/java' | grep 'java-25-openjdk' | head -1
+    register: java25_bin
+    changed_when: false
 
-- name: Show database check result
-  ansible.builtin.debug:
-    msg: "Database check result: {{ mysql_db_check.rc }} (0 means DB exists, non-zero means not exists)"
+  - name: Find Java 25 compiler
+    ansible.builtin.shell: |
+      find /usr/lib/jvm -type f -path '*/bin/javac' | grep 'java-25-openjdk' | head -1
+    register: javac25_bin
+    changed_when: false
 
-# - name: Load schema, app-user, and master-data SQL scripts if DB not exists
-#   ansible.builtin.shell: |
-#     mysql -h {{ MYSQL_HOST }} -u{{ MYSQL_ROOT_USER }} -p{{ MYSQL_ROOT_PASSWORD }} < {{ item }}
-#   loop:
-#     - /app/db/schema.sql
-#     - /app/db/app-user.sql
-#     - /app/db/master-data.sql
-#   when: mysql_db_check.rc != 0
+  - name: Set Java 25 as default
+    ansible.builtin.command: alternatives --set java {{ java25_bin.stdout }}
+    when: java25_bin.stdout != ""
 
-- name: import data
-  tags: ## If you want to run particular task then use tags
-  - import
-  community.mysql.mysql_db:
-    name: all
-    login_user: root
-    login_password: RoboShop@1
-    login_host: mysql.daws2025.online
-    state: import
-    target: "{{ item }}"
-  loop:
-  - /app/db/schema.sql
-  - /app/db/app-user.sql
-  - /app/db/master-data.sql
-  when: mysql_db_check.rc != 0
+  - name: Set Java 25 compiler as default
+    ansible.builtin.command: alternatives --set javac {{ javac25_bin.stdout }}
+    when: javac25_bin.stdout != ""
 
-- name: systemd setup
-  include_role:
-    name: common
-    tasks_from: systemd
+  - name: Get Java 25 JAVA_HOME
+    ansible.builtin.shell: |
+      dirname "$(dirname "$(readlink -f /usr/bin/java)")"
+    register: java_home
+    changed_when: false
+
+  - name: Configure JAVA_HOME permanently
+    ansible.builtin.copy:
+      dest: /etc/profile.d/java.sh
+      content: |
+        export JAVA_HOME={{ java_home.stdout }}
+        export PATH=$JAVA_HOME/bin:$PATH
+      mode: '0644'
+
+  - name: create roboshop system shipping
+    ansible.builtin.user:
+      name: roboshop
+      create_home: false
+      shell: /sbin/nologin
+      system: true
+      comment: "roboshop system shipping"
+      home: /app
+
+  - name: removing existing app directory
+    ansible.builtin.file:
+      path: /app
+      state: absent
+
+  - name: removing existing zip files
+    ansible.builtin.file:
+      path: /tmp/shipping.zip
+      state: absent
+
+  - name: create app directory
+    ansible.builtin.file:
+      path: /app
+      state: directory
+  
+  - name: Download the application code
+    ansible.builtin.get_url:
+      url: https://raw.githubusercontent.com/daws-92s/roboshop-documentation/refs/heads/main/artifacts/shipping-{{ app_version }}.zip
+      # url: https://roboshop-artifacts.s3.amazonaws.com/shipping-v3.zip
+      dest: /tmp/shipping.zip
+  
+  # This module thinks file exists on ansible control server, needs to extract on to remote machine(shipping)
+  # remote_src: yes => means file already exits in shipping server
+  - name: extract the code 
+    ansible.builtin.unarchive:
+      src: /tmp/shipping.zip
+      dest: /app
+      remote_src: yes
+  
+  - name: Check Maven version with Java 25
+    ansible.builtin.command: mvn --version
+    args:
+      chdir: /app
+    environment:
+      JAVA_HOME: "{{ java_home.stdout }}"
+      PATH: "{{ java_home.stdout }}/bin:{{ ansible_env.PATH }}"
+    register: mvn_version
+
+  - name: Print Maven version
+    ansible.builtin.debug:
+      msg: "{{ mvn_version.stdout_lines }}"
+
+  - name: Verify Java version
+    ansible.builtin.command: java -version
+    environment:
+      JAVA_HOME: "{{ java_home.stdout }}"
+      PATH: "{{ java_home.stdout }}/bin:{{ ansible_env.PATH }}"
+    register: java_version
+
+  - name: Display Java version
+    ansible.builtin.debug:
+      msg: "{{ java_version.stderr_lines }}"
+
+  - name: install maven dependencies
+    ansible.builtin.command: mvn clean package
+    args:
+      chdir: /app
+    environment:
+      JAVA_HOME: "{{ java_home.stdout }}"
+      PATH: "{{ java_home.stdout }}/bin:{{ ansible_env.PATH }}"
+  
+  - name: rename jar file
+    ansible.builtin.command: mv target/shipping.jar shipping.jar 
+    args:
+      chdir: /app
+
+  - name: copy shipping service to system directory
+    ansible.builtin.template:
+      src: shipping.service
+      dest: /etc/systemd/system/shipping.service
+    tags:
+    - mysql
+
+  - name: systemctl daemon reload
+    ansible.builtin.systemd_service:
+      daemon_reload: true
+  
+  - name: Start & Enable shipping Service
+    ansible.builtin.service:
+      name: shipping
+      state: started
+      enabled: yes
+  
+  - name: install MySQL client ## mentioned in loop
+    ansible.builtin.dnf:
+      name: mysql-server
+      state: present
+
+  - name: Check if cities data exists or not
+    ansible.builtin.shell: |
+      mysql -h {{ mysql_host }} -uroot -p{{ mysql_root_password }} -e "USE cities; SHOW TABLES LIKE 'countries';" 
+      mysql -h {{ mysql_host }} -uroot -p{{ mysql_root_password }} -N -B -e "SELECT COUNT(*) FROM cities.cities;"
+    register: cities_countries_count
+    ignore_errors: yes
+    changed_when: false
+    tags:
+    - mysql
+
+  - name: print cities & countries
+    ansible.builtin.debug:
+      msg: "Database check result: {{ cities_countries_count.rc }} (0 means DB exists, non-zero means not exists)"
+    tags:
+    - mysql
+
+  # - name: Load schema, app-user, and master-data SQL scripts if DB not exists
+  #   ansible.builtin.shell: |
+  #     mysql -h {{ mysql_host }} -uroot -p{{ mysql_root_password }} < /app/db/schema.sql
+  #     mysql -h {{ mysql_host }} -uroot -p{{ mysql_root_password }} < /app/db/app-user.sql
+  #     mysql -h {{ mysql_host }} -uroot -p{{ mysql_root_password }} < /app/db/master-data.sql
+  #   when: cities_countries_count.rc != 0 or cities_countries_count.stdout | int == 0
+
+  - name: Load schema, app-user, and master-data SQL scripts if DB not exists
+    ansible.builtin.shell: |
+      mysql -h {{ mysql_host }} -uroot -p{{ mysql_root_password }} < {{ item }}
+    loop:
+      # - /app/db/schema.sql
+      - /app/db/app-user.sql
+      - /app/db/master-data.sql
+    when: cities_countries_count.rc != 0 or cities_countries_count.stdout | int == 0
+    tags:
+    - mysql
+
+  # - name: Install PyMySQL and cryptography for Python3
+  #   ansible.builtin.pip:
+  #     name: "{{item}}"
+  #     executable: pip3.9
+  #   loop:
+  #   - PyMySQL
+  #   - cryptography
+  
+  # # - name: connect to mysql using app user
+  # #   community.mysql.mysql_info:
+  # #     login_user: shipping
+  # #     login_password: {{ mysql_root_password }}
+  # #     login_host: {{ mysql_host }}
+  # #     login_db: cities
+  
+  # - name: import data
+  #   tags: ## If you want to run particular task then use tags
+  #   - import
+  #   community.mysql.mysql_db:
+  #     name: all
+  #     login_user: root
+  #     login_password: {{ mysql_root_password }}
+  #     login_host: {{ mysql_host }}
+  #     state: import
+  #     target: "{{ item }}"
+  #   loop:
+  #   - /app/db/schema.sql
+  #   - /app/db/app-user.sql
+  #   - /app/db/master-data.sql
+  #   when: cities_countries_count.rc != 0 or cities_countries_count.stdout | int == 0
+
+  - name: restart shipping Service
+    ansible.builtin.service:
+      name: shipping
+      state: restarted
+    tags:
+    - mysql
