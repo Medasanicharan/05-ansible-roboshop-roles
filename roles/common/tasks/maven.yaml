@@ -1,7 +1,3 @@
-- name: configure shipping component
-  hosts: shipping
-  become: yes
-  tasks:
 - name: enable maven 3.9
   command: dnf module enable maven:3.9 -y
 
