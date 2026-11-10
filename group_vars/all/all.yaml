@@ -36,3 +36,9 @@ rabbitmq_password: "{{ vault_rabbitmq_password }}"
 # shipping_db_password: RoboShop@1
 shipping_db_user: "{{ vault_shipping_db_user }}"
 shipping_db_password: "{{ vault_shipping_db_password }}"
+
+## payment creds ##
+# amqp_user: roboshop
+# amqp_password: roboshop123
+amqp_user: "{{ vault_amqp_user }}"
+amqp_password: "{{ vault_amqp_password }}"
