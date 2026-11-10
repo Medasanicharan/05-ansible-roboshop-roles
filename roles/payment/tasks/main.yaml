@@ -12,3 +12,8 @@
   include_role:
     name: common
     tasks_from: systemd
+
+- name: start and enable service
+  include_role:
+    name: common
+    tasks_from: restart
