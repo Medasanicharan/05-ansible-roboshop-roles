@@ -20,5 +20,7 @@ cart_host: cart.cloudnai.online
 frontend_host: frontend.cloudnai.online
 
 ## mysql creds ##
-mysql_root_user: root
-mysql_root_password: RoboShop@1
+# mysql_root_user: root
+# mysql_root_password: RoboShop@1
+mysql_root_user: vault_mysql_user
+mysql_root_password: vault_mysql_password
