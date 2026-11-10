@@ -1,22 +1,12 @@
-# - name: Disable current module nodejs
-#   ansible.builtin.command: dnf module disable nodejs -y
-
-# - name: Enable required module nodejs:24
-#   ansible.builtin.command: dnf module enable nodejs:24 -y
-
-# - name: Install NodeJS
-#   ansible.builtin.dnf:
-#     name: nodejs
-#     state: present
-
 - name: application Setup
   include_role:
     name: common
     tasks_from: app-setup
 
-# - name: install dependencies
-#   community.general.npm:
-#     path: /app
+- name: NodeJS Setup
+  include_role:
+    name: common
+    tasks_from: nodejs
 
 # - name: copy catalogue service to sysem directory
 #   # ansible.builtin.copy:
