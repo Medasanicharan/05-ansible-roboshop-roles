@@ -24,3 +24,9 @@ frontend_host: frontend.cloudnai.online
 # mysql_root_password: RoboShop@1
 mysql_root_user: "{{ vault_mysql_user }}"
 mysql_root_password: "{{ vault_mysql_password }}"
+
+## rabbitmq creds ##
+# rabbitmq_user: roboshop
+# rabbitmq_password: roboshop123
+rabbitmq_user: "{{ vault_rabbitmq_user }}"
+rabbitmq_password: "{{ vault_rabbitmq_password }}"
